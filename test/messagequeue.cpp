@@ -14,12 +14,13 @@
 MessageQueue::MessageQueue(key_t key, bool server)
 {
     err = 0; // 0 indicates no error;
-    serverType = 1; // 1 reserved for server to read;
+    isServer = true; // 1 reserved for server to read;
+    mKey = 0;
 
     int flag = PERMS;
     string txt = DEAFULTMSGQ;
 
-    if (server)
+    if (isServer)
     {
         flag |= IPC_CREAT;
         mType = 1; // 1 reserved for server;
@@ -47,11 +48,11 @@ MessageQueue::MessageQueue(key_t key, bool server)
 MessageQueue::~MessageQueue()
 {
     // if it is the the server , delete the message queue
-    if(serverType == mType)
+    if(isServer)
         msgctl(mId, IPC_RMID, nullptr);
 };
 
-int MessageQueue::SendMsg(string msg, long type)
+bool MessageQueue::SendMsg(string msg, long type)
 {
     if (type <= 0) return -1;
 
@@ -61,7 +62,7 @@ int MessageQueue::SendMsg(string msg, long type)
 
     buf.mType = type;
     strcpy(buf.mText, msg.c_str());
-    return msgsnd(mId, &buf, len, IPC_NOWAIT);
+    return msgsnd(mId, &buf, len, IPC_NOWAIT) == 0;
 };
 
 ssize_t MessageQueue::ReadMsg(string *msg, long type)

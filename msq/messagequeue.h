@@ -21,8 +21,10 @@ class MessageQueue
 
 public:
     MessageQueue(key_t key, bool server);
-    int SendMsg(string msg, long type);
+    bool SendMsg(string msg, long type);
     ssize_t ReadMsg(string *msg, long type);
+    int getMessgaeId();
+    key_t getMessageKey();
     ~MessageQueue();
 
     int err;
@@ -30,10 +32,9 @@ public:
 private:
     struct MsgBuf buf;
     int mId;
-    long mType;
-    long serverType;
     key_t mKey;
-    bool mServer;
+    long mType;
+    bool isServer;
 };
 
 #endif // MESSAGEQUEUE_H
