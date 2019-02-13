@@ -73,6 +73,6 @@ ssize_t MessageQueue::ReadMsg(string *msg, long type)
 
 	ssize_t len = msgrcv(mId, &buf, sizeof(buf.mText), type, IPC_NOWAIT);
 	buf.mText[len] = '\0';
-	*msg = buf.mText;
+	msg->assign(buf.mText, len);
 	return len;
 };
