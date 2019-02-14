@@ -35,6 +35,8 @@ public:
 
     string RcvMsg(string id); // receive a message by id, like "GPS", "RADAR", "TRIGGER"
     string RcvMsg(); // receive a message by last id
+    int getMessgaeId();
+    key_t getMessageKey();
     ~MessageQueue();
 
     int err; // 0 for no error

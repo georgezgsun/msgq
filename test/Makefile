@@ -706,59 +706,7 @@ compiler_clean: compiler_moc_predefs_clean
 
 ####### Compile
 
-main.o: main.cpp ../../../Qt/5.12.0/gcc_64/include/QtCore/QCoreApplication \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qcoreapplication.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qglobal.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qconfig-bootstrapped.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qconfig.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qtcore-config.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qsystemdetection.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qprocessordetection.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qcompilerdetection.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qtypeinfo.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qsysinfo.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qlogging.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qflags.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qatomic.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qbasicatomic.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qatomic_bootstrap.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qgenericatomic.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qatomic_cxx11.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qatomic_msvc.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qglobalstatic.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qmutex.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qnumeric.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qversiontagging.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qstring.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qchar.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qbytearray.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qrefcount.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qnamespace.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qarraydata.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qstringliteral.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qstringalgorithms.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qstringview.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qstringbuilder.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qobject.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qobjectdefs.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qobjectdefs_impl.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qlist.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qalgorithms.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qiterator.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qhashfunctions.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qpair.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qbytearraylist.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qstringlist.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qregexp.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qstringmatcher.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qcoreevent.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qscopedpointer.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qmetatype.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qvarlengtharray.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qcontainerfwd.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qobject_impl.h \
-		../../../Qt/5.12.0/gcc_64/include/QtCore/qeventloop.h \
-		../msq/messagequeue.h
+main.o: main.cpp ../msq/messagequeue.h
 	$(CXX) -c $(CXXFLAGS) $(INCPATH) -o main.o main.cpp
 
 messagequeue.o: messagequeue.cpp ../msq/messagequeue.h

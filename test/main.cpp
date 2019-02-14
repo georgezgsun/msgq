@@ -1,8 +1,9 @@
-#include <QCoreApplication>
+//#include <QCoreApplication>
 #include <ctime>
 #include <chrono>
 #include <iostream>
 #include <unistd.h>
+#include <sys/time.h>
 #include "messagequeue.h"
 
 using namespace std;
@@ -16,7 +17,7 @@ string current_date()
     strftime(buf, sizeof(buf), "%A %d/%m/%Y", &tstruct);
     return buf;
 }
-string current_time()
+string current_time1()
 {
     time_t now = time(nullptr);
     struct tm tstruct;
@@ -27,14 +28,33 @@ string current_time()
     return buf;
 }
 
+string current_time()
+{
+	struct timeval tv;
+	time_t nowtime;
+	struct tm *nowtm;
+	char tmbuf[64], buf[64];
+
+    gettimeofday(&tv, nullptr);
+	nowtime = tv.tv_sec;
+	nowtm = localtime(&nowtime);
+	strftime(tmbuf, sizeof tmbuf, "%Y-%m-%d %H:%M:%S", nowtm);
+	snprintf(buf, sizeof buf, "%s.%06ld", tmbuf, tv.tv_usec);
+    return buf;
+}
+
 int main(int argc, char *argv[])
 {
-    QCoreApplication a(argc, argv);
+//    QCoreApplication a(argc, argv);
+
+    struct timeval tv;
 
     string msg;
     long rType = 10;
     MessageQueue *mq;
 
+    clock_t t = clock();
+    clock_t nextSend = 0;
     if (argc == 1)
     {
         cout << "Running in server mode, waiting for client to connect and then response." << endl;
@@ -45,13 +65,18 @@ int main(int argc, char *argv[])
             return -1;
         }
 
-        bool e = false;
-        while (!e)
+        while (true)
         {
-            if (mq->RcvMsg() != "")
+            msg = mq->RcvMsg();
+            if ( msg != "")
             {
                 cout << current_date() << " " << current_time() << " : " << msg << endl;
                 mq->SndMsg("Server received (" + msg + ") at " + current_time() );
+                if (msg == "end")
+                {
+                    mq->~MessageQueue();
+                    break;
+                }
             }
         }
     }
@@ -68,17 +93,22 @@ int main(int argc, char *argv[])
 
         msg.append(" on board");
         if (!mq->SndMsg(msg)) return -2;
+        cout << "Sent " << msg << " at " << current_time() << endl;
 
-        time_t t = time(nullptr);
+        t = clock();
         while (true)
         {
             msg = mq->RcvMsg("SERVER");
             if (msg != "")
                 cout << "Received at " << current_time() << " : " << msg << endl;
-            if ((t > nextSend) && mq->SndMsg(msg))
+
+            if ((t > nextSend) && mq->SndMsg("Query data at " + current_time()))
+            {
+                cout << "Sent query request at " << current_time() << endl;
                 nextSend = t + CLOCKS_PER_SEC;
+            }
         }
     }
 
-    return a.exec();
+  //  return a.exec();
 }

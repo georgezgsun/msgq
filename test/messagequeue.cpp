@@ -13,6 +13,8 @@
 // key = 0 indicate to use default key based on "msgq.txt";
 MessageQueue::MessageQueue(string name)
 {
+    rType = 0;
+    mType = 0;
     for (int i = 0; i < static_cast<int>(sizeof(Ids)); i++)
     {
         if (strcasecmp(name.c_str(), Ids[i].c_str()))
@@ -21,7 +23,6 @@ MessageQueue::MessageQueue(string name)
             break;
         }
     }
-
     err = -1; // 0 indicates no error;
     if (mType == 0) return;
 
