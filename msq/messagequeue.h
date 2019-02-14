@@ -8,35 +8,75 @@
 
 #define PERMS 0644
 #define DEAFULTMSGQ "/tmp/msgq.txt"
+
+#define SERVER 1;
+#define LOG 2;
+#define DATABASE 3;
+#define WATCHDOG 4;
+#define RADAR 10
+#define GPS 11;
+#define TRIGGER 12;
+#define WIFI 13;
+#define BLUETOOTH 14;
+#define USER 15
+#define LOGIN 15; //LOGIN is the same as USER
+#define UPLOADER 17;
+#define DOWNLOADER 18;
+#define FRONTCAM 20;
+#define REARCAM 22;
+#define RIGHTCAM 24;
+#define LEFTTCAM 26;
+#define CAM1 20;
+#define CAM2 22;
+#define CAM3 24;
+#define CAM4 26;
+#define CAM5 28;
+#define CAM6 29;
+#define ETH 30;
+#define MIC 40;
+#define MIC1 41;
+#define MIC2 42;
+#define MIC3 43;
+#define MIC4 44;
+#define BWC 50;
+#define BWC1 51;
+#define BWC2 52;
+#define BWC3 53;
+#define BWC4 54;
+#define BWC 50;
+
 using namespace std;
+
+struct MsgPkt
+{
+    long sType;  // sender type
+    long sec;   // time stamp
+    long usec;
+    char mText[200];
+};
 
 struct MsgBuf
 {
-   long mType;
-   char mText[200];
+   long rType;  // receiver type
+   MsgPkt pkt;
 };
 
-static string Ids[40] = {"SERVER", "LOG", "DATABASE", "RADAR", "GPS", "TRIGGER", "WIFI", "USER", \
-                  "UPLOADER", "DOWNLOADER", "FRONTCAM", "REARCAM", "LEFTCAM", "RIGHTCAM", \
-                 "CAM1", "CAM2", "CAM3", "CAM4", "CAM5", "CAM6", "BLUETOOTH", "ETH", \
-                 "MIC1", "MIC2", "AUDIO1", "AUDIO2", "AUDIO3", "AUDIO4", \
-                 "RECORDER", "MEDIACENTER", "BWC", "BWC1", "BWC2", "BWC3", "BWC4", \
-                 "WATCHDOG", "", "", "", ""};
 
 class MessageQueue
 {
 
 public:
-    MessageQueue(string name); // Specify the module name, like "GPS", "RADAR", "TRIGGER"
-    MessageQueue(); // Reserved for server use
+    MessageQueue(string keyFilename, long SrvType); // Open specified message queue with given service name
 
-    bool SndMsg(string msg, long type);
-    bool SndMsg(string msg);
+    bool SndMsg(string msg, long SrvType); // Send a packet to specified service provider
+    bool AskForData(long SrvType); // Send a specicial command to service provider asking for service data to be put on queue
 
-    string RcvMsg(string id); // receive a message by id, like "GPS", "RADAR", "TRIGGER"
-    string RcvMsg(); // receive a message by last id
-    int getMessgaeId();
-    key_t getMessageKey();
+    string RcvMsg(long SrvType); // receive a message from service provider, like GPS, RADAR, TRIGGER
+    MsgPkt RcvPkt(long SrvType); // receive whole packet from service provider
+
+    bool Subscript(long SrvType); // Subscript the Service
+    bool UnSubspript(long SrvType); // Stop subscript the service
+
     ~MessageQueue();
 
     int err; // 0 for no error
@@ -45,7 +85,6 @@ private:
     struct MsgBuf buf;
     int mId;
     long mType; // sender Type, my Type
-    long rType; // receiver Type, peer Type
 };
 
 #endif // MESSAGEQUEUE_H

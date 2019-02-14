@@ -9,44 +9,27 @@
 #include <sys/types.h>
 #include <sys/ipc.h>
 #include <sys/msg.h>
+#include <sys/time.h>
 
 // key = 0 indicate to use default key based on "msgq.txt";
-MessageQueue::MessageQueue(string name)
+MessageQueue::MessageQueue(string keyFilename, long type)
 {
-    rType = 0;
-    mType = 0;
-    for (int i = 0; i < static_cast<int>(sizeof(Ids)); i++)
-    {
-        if (strcasecmp(name.c_str(), Ids[i].c_str()))
-        {
-            mType = i+1;
-            break;
-        }
-    }
+    mType = type;
     err = -1; // 0 indicates no error;
-    if (mType == 0) return;
-
-    int flag = PERMS;
-    if (mType == 1) // This idicates a server
-        flag |= IPC_CREAT;
+    if (mType <= 0) return;
+    if(keyFilename == "") keyFilename = DEAFULTMSGQ;
 
     // Get the key for the message queue
     err = -2; // perror("ftok");
-    string txt = DEAFULTMSGQ;
-    key_t mKey = ftok(txt.c_str(), 'B');
+    key_t mKey = ftok(keyFilename.c_str(), 'B');
     if (mKey == -1) return;
 
     err = -3; //perror("msgget");
-    mId = msgget(mKey, flag);
+    mId = msgget(mKey, PERMS | IPC_CREAT);
     if (mId == -1) return;
 
     err = 0;
 };
-
-MessageQueue::MessageQueue()
-{
-    MessageQueue("SERVER");
-}
 
 MessageQueue::~MessageQueue()
 {
@@ -54,56 +37,63 @@ MessageQueue::~MessageQueue()
     if(1 == mType)
         msgctl(mId, IPC_RMID, nullptr);
 };
-
-bool MessageQueue::SndMsg(string msg)
+bool MessageQueue::SndMsg(string msg, long SrvType)
 {
     err = -1;
-    if (rType <= 0) return -1;
+    if (SrvType <= 0) return -1;
 
-    unsigned long n = static_cast<unsigned long>( sprintf( buf.mText, "%d10", static_cast<int>(rType) ) );
-    size_t len = msg.length() - n;
-    if (len > sizeof(buf.mText))
-        len = sizeof(buf.mText);
+    struct timeval tv;
+    gettimeofday(&tv, nullptr);
+    buf.rType = SrvType;
+    buf.pkt.sType = mType;
+    buf.pkt.sec = tv.tv_sec;
+    buf.pkt.usec = tv.tv_usec;
+    size_t len = msg.length();
+    if (len > sizeof(buf.pkt.mText))
+        len = sizeof(buf.pkt.mText);
 
-    buf.mType = rType;
-    strcpy(buf.mText + n, msg.c_str());
-    return msgsnd(mId, &buf, len + n, IPC_NOWAIT) >= 0;
+    strcpy(buf.pkt.mText, msg.c_str());
+    return msgsnd(mId, &buf, len + 3*sizeof (long), IPC_NOWAIT) >= 0;
 };
 
-bool MessageQueue::SndMsg(string msg, long type)
+bool MessageQueue::AskForData(long SrvType)
 {
-    rType = type;
-    return SndMsg(msg);
+    return SndMsg("Query", SrvType);
 };
 
-string MessageQueue::RcvMsg(string name)
+string MessageQueue::RcvMsg(long SrvType)
 {
-    for (int i = 0; i < static_cast<int>(sizeof(Ids)); i++)
-    {
-        if (strcasecmp(name.c_str(), Ids[i].c_str()))
-        {
-            rType = i+1;
-            break;
-        }
-    }
+    ssize_t headerLen = 3 * sizeof(long);
+    buf.pkt.sType = 0;
+    buf.pkt.sec = 0;
+    buf.pkt.usec = 0;
     err = -1;
-    if (rType <= 0) return "";
-
-    return RcvMsg();
-};
-
-string MessageQueue::RcvMsg()
-{
-    err = -1;
-    if (rType <= 0) return "";
+    if (SrvType <= 0) return "";
 
     err = -2;
-    ssize_t len = msgrcv(mId, &buf, sizeof(buf.mText), rType, IPC_NOWAIT);
-    if (len < 0) return "";
+    ssize_t len = msgrcv(mId, &buf, sizeof(buf.pkt), SrvType, IPC_NOWAIT) - headerLen;
+    if (len <= 0) return "";
 
     err = 0;
-    buf.mText[len] = '\0';
+    buf.pkt.mText[len] = '\0';
     string msg;
-    msg.assign(buf.mText, static_cast<unsigned long>(len));
+    msg.assign(buf.pkt.mText, static_cast<unsigned long>(len));
     return msg;
+};
+
+MsgPkt MessageQueue::RcvPkt(long SrvType)
+{
+    ssize_t headerLen = 3 * sizeof(long);
+    err = -1;
+    buf.pkt.sType = 0;
+    buf.pkt.sec = 0;
+    buf.pkt.usec = 0;
+    if (SrvType <= 0) return buf.pkt;
+
+    err = -2;
+    ssize_t len = msgrcv(mId, &buf, sizeof(buf.pkt), SrvType, IPC_NOWAIT) - headerLen;
+    if (len <= 0) return buf.pkt;
+
+    err = 0;
+    return buf.pkt;
 }
