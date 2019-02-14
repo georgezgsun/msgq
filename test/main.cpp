@@ -34,50 +34,49 @@ int main(int argc, char *argv[])
     string msg;
     long rType = 10;
     MessageQueue *mq;
-    bool isServer = argc > 1;
-    if (isServer)
+
+    if (argc == 1)
     {
-        cout << "Running in server mode, waiting for client to connect." << endl;
-        mq = new MessageQueue(0, true);
+        cout << "Running in server mode, waiting for client to connect and then response." << endl;
+        mq = new MessageQueue("SERVER");
         if (mq->err < 0)
         {
             cerr << "Cannot connect to required message queue\n";
             return -1;
         }
-        while (mq->ReadMsg(&msg, 1) < 1)
-        {
-            cout << ".";
-            sleep(1);
-        }
-        cout << current_date() << " " << current_time() << " : " << msg << endl;
 
-        while (mq->SendMsg("Server sent at " + current_time(), rType) > 0)
+        bool e = false;
+        while (!e)
         {
-            sleep(1);
-            cout << ":";
+            if (mq->RcvMsg() != "")
+            {
+                cout << current_date() << " " << current_time() << " : " << msg << endl;
+                mq->SndMsg("Server received (" + msg + ") at " + current_time() );
+            }
         }
-
     }
     else
     {
-        cout << "Running in client mode. Try to cotact server." << endl;
-        mq = new MessageQueue(0, false);
+        cout << "Running in client mode. Try to query from the server." << endl;
+        msg = argv[1];
+        mq = new MessageQueue(msg);
         if (mq->err < 0)
         {
-            cerr << "Cannot connect to required message queue\n";
+            cerr << "Cannot open message queue with Id " << msg << endl;
             return -1;
         }
-        while (mq->SendMsg("Alert from client", 1) < 1)
-        {
-            sleep(1);
-        };
 
+        msg.append(" on board");
+        if (!mq->SndMsg(msg)) return -2;
+
+        time_t t = time(nullptr);
         while (true)
         {
-            if (mq->ReadMsg(&msg,rType) > 0)
+            msg = mq->RcvMsg("SERVER");
+            if (msg != "")
                 cout << "Received at " << current_time() << " : " << msg << endl;
-            else
-                sleep(1);
+            if ((t > nextSend) && mq->SndMsg(msg))
+                nextSend = t + CLOCKS_PER_SEC;
         }
     }
 

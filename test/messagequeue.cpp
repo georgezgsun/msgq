@@ -11,66 +11,98 @@
 #include <sys/msg.h>
 
 // key = 0 indicate to use default key based on "msgq.txt";
-MessageQueue::MessageQueue(key_t key, bool server)
+MessageQueue::MessageQueue(string name)
 {
-    err = 0; // 0 indicates no error;
-    serverType = 1; // 1 reserved for server to read;
+    for (int i = 0; i < static_cast<int>(sizeof(Ids)); i++)
+    {
+        if (strcasecmp(name.c_str(), Ids[i].c_str()))
+        {
+            mType = i+1;
+            break;
+        }
+    }
+
+    err = -1; // 0 indicates no error;
+    if (mType == 0) return;
 
     int flag = PERMS;
-    string txt = DEAFULTMSGQ;
-
-    if (server)
-    {
+    if (mType == 1) // This idicates a server
         flag |= IPC_CREAT;
-        mType = 1; // 1 reserved for server;
-    }
-    else
-        mType = static_cast<long>(getpid()); // use the pid to identify the client;
 
     // Get the key for the message queue
-    if (key == 0) key = ftok(txt.c_str(), 'B');
-    if (key == -1)
-    {
-        err = -2; // perror("ftok");
-        return;
-    }
+    err = -2; // perror("ftok");
+    string txt = DEAFULTMSGQ;
+    key_t mKey = ftok(txt.c_str(), 'B');
+    if (mKey == -1) return;
 
-    mId = msgget(key, flag);
-    if (mId == -1)
-    {
-        err = -1; //perror("msgget");
-        return;
-    }
-    mKey = key;
+    err = -3; //perror("msgget");
+    mId = msgget(mKey, flag);
+    if (mId == -1) return;
+
+    err = 0;
 };
+
+MessageQueue::MessageQueue()
+{
+    MessageQueue("SERVER");
+}
 
 MessageQueue::~MessageQueue()
 {
     // if it is the the server , delete the message queue
-    if(serverType == mType)
+    if(1 == mType)
         msgctl(mId, IPC_RMID, nullptr);
 };
 
-int MessageQueue::SendMsg(string msg, long type)
+bool MessageQueue::SndMsg(string msg)
 {
-    if (type <= 0) return -1;
+    err = -1;
+    if (rType <= 0) return -1;
 
-    size_t len = msg.length();
+    unsigned long n = static_cast<unsigned long>( sprintf( buf.mText, "%d10", static_cast<int>(rType) ) );
+    size_t len = msg.length() - n;
     if (len > sizeof(buf.mText))
         len = sizeof(buf.mText);
 
-    buf.mType = type;
-    strcpy(buf.mText, msg.c_str());
-    return msgsnd(mId, &buf, len, IPC_NOWAIT);
+    buf.mType = rType;
+    strcpy(buf.mText + n, msg.c_str());
+    return msgsnd(mId, &buf, len + n, IPC_NOWAIT) >= 0;
 };
 
-ssize_t MessageQueue::ReadMsg(string *msg, long type)
+bool MessageQueue::SndMsg(string msg, long type)
 {
-    if (type <= 0) return -1;
-
-    ssize_t len = msgrcv(mId, &buf, sizeof(buf.mText), type, IPC_NOWAIT);
-    if (len < 0) return len;
-    buf.mText[len] = '\0';
-    msg->assign(buf.mText, static_cast<unsigned long>(len));
-    return len;
+    rType = type;
+    return SndMsg(msg);
 };
+
+string MessageQueue::RcvMsg(string name)
+{
+    for (int i = 0; i < static_cast<int>(sizeof(Ids)); i++)
+    {
+        if (strcasecmp(name.c_str(), Ids[i].c_str()))
+        {
+            rType = i+1;
+            break;
+        }
+    }
+    err = -1;
+    if (rType <= 0) return "";
+
+    return RcvMsg();
+};
+
+string MessageQueue::RcvMsg()
+{
+    err = -1;
+    if (rType <= 0) return "";
+
+    err = -2;
+    ssize_t len = msgrcv(mId, &buf, sizeof(buf.mText), rType, IPC_NOWAIT);
+    if (len < 0) return "";
+
+    err = 0;
+    buf.mText[len] = '\0';
+    string msg;
+    msg.assign(buf.mText, static_cast<unsigned long>(len));
+    return msg;
+}
