@@ -39,7 +39,7 @@ string current_time()
 	nowtime = tv.tv_sec;
 	nowtm = localtime(&nowtime);
 	strftime(tmbuf, sizeof tmbuf, "%Y-%m-%d %H:%M:%S", nowtm);
-	snprintf(buf, sizeof buf, "%s.%06ld", tmbuf, tv.tv_usec);
+    snprintf(buf, sizeof buf, "%s.%06ld", tmbuf, tv.tv_usec);
     return buf;
 }
 
@@ -47,29 +47,53 @@ int main(int argc, char *argv[])
 {
 //    QCoreApplication a(argc, argv);
     string msg;
-    MsgPkt pkt;
-    MessageQueue *mq;
+    MessageQueue *mq = new MessageQueue();
+    char txt[255];
+    char data[255];
+    unsigned char dataLen = 0;
 
-    clock_t t = clock();
+    time_t now;
+    struct tm tstruct;
     clock_t nextSend = 0;
+    ssize_t len;
     if (argc == 1)
     {
         cout << "Running in server mode, waiting for client to connect and then response." << endl;
-        mq = new MessageQueue("", 1);
-        if (mq->err < 0)
+        if (!mq->Open(1))
         {
             cerr << "Cannot connect to required message queue\n";
             return -1;
         }
 
+        //mq->BroadcastUpdate(&data, dataLen);
+
+        bool updated = true;
         while (true)
         {
-            pkt = mq->RcvPkt(1);
-            if ( pkt.sType != 0)
+            now = time(nullptr);
+            tstruct = *localtime(&now);
+            //format: HH:mm:ss
+            dataLen = strftime(txt, 30, "%X", &tstruct) & 0xFF;
+
+            updated = false;
+            for (int i = 0; i < dataLen; i++)
             {
-                cout << "Received at " << current_time() << " : (" << pkt.sType << ") " \
-                     << pkt.sec << "." << pkt.usec << " " << pkt.mText << endl;
-                mq->SndMsg("Here you are at " + current_time(), pkt.sType);
+                if (txt[i] != data[i])
+                {
+                    updated = true;
+                    data[i] = txt[i];
+                }
+            }
+            if (updated)
+                mq->BroadcastUpdate(&data, dataLen);
+
+            len =mq->RcvMsg(static_cast<void *>(&txt), true);
+            if ( len > 0)
+            {
+                msg.assign(txt, static_cast<size_t>(len));
+                cout << "Received " << msg << " at " << current_time() << " : (" << mq->msgType << ") " \
+                     << mq->msgTS_sec << "." << mq->msgTS_usec << endl;
+
                 if ( msg == "end")
                 {
                     mq->~MessageQueue();
@@ -82,11 +106,9 @@ int main(int argc, char *argv[])
     {
         cout << "Running in client mode. Try to query from the server." << endl;
         int sType = atoi(argv[1]);
-
-        mq = new MessageQueue("", sType);
-        if (mq->err < 0)
+        if (!mq->Open(sType))
         {
-            cerr << "Cannot open message queue with Id " << sType << ", error= " << mq->err << endl;
+            cerr << "Cannot connect to required message queue\n";
             return -1;
         }
 
@@ -98,23 +120,21 @@ int main(int argc, char *argv[])
             return -2;
         }
         cout << "Sent " << msg << " at " << current_time() << endl;
+        mq->Subscribe(1);
 
         while (true)
         {
-            pkt = mq->RcvPkt(sType);
-            if (pkt.sType != 0)
-                cout << "Received at " << current_time() << " : " << pkt.sType << " " \
-                     << pkt.sec << "." << pkt.usec << " " << pkt.mText << endl;
-
-            t = clock();
-            if (t > nextSend)
+            msg = mq->RcvMsg();
+            if (msg.length() > 0)
             {
-                cout << "Sent query request at " << current_time() << endl;
-                mq->SndMsg("Query data at " + current_time(), 1);
-                nextSend = t + CLOCKS_PER_SEC;
+                cout << "Received " << msg << " at " << current_time() << " : (" << mq->msgType << ") " \
+                     << mq->msgTS_sec << "." << mq->msgTS_usec << endl;
+                if (msg == "end") break;
             }
         }
     }
+
+    cout << "End of the demo. \n";
 
   //  return a.exec();
 }
