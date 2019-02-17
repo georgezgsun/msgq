@@ -79,6 +79,7 @@ public:
 	MessageQueue(); // Define a default message queue
 	
 	bool Open(long SrvType); // Open the message queue and name its service type, like GPS, RADAR, TRIGGER
+    bool SetAutoReply(bool EnableAutoReply);
 	
 	bool Subscribe(long SrvType); // Subscribe a SrvType, unsubscribe for a negtive number 
     bool AskForService(long SrvType); // Ask for service data from specified service provider 
@@ -87,7 +88,7 @@ public:
     bool BroadcastUpdate(void *p, unsigned char dataLength); // Multicast the data stored at *p with dataLength and send it to every subscriber
 
     string RcvMsg(); // receive a text message from sspecified ervice provider, like GPS, RADAR, TRIGGER. Not Autoreply.
-    ssize_t RcvMsg(void *p, bool AutoReply); // receive a packet from specified service provider. Autoreply all requests when enabled.
+    ssize_t RcvMsg(void *p); // receive a packet from specified service provider. Autoreply all requests when enabled.
 	
 	bool FeedWatchDog(); // Feed the dog at watchdog server
 	bool Log(string logContent, long logType); // Send a log to log server
@@ -105,11 +106,23 @@ private:
     struct MsgBuf buf;
     int mId;
     long mType; // my Type, ser type of this module
-	string filename;
-	unsigned char totalSubcribers;
-	long subscribers[255];
+    string filename;  // the file that the key is build from
+    bool autoReply; // AutoReply is enabled when true
+
+    unsigned char totalSubscriptions;  // the number of my subscriptions
+    long mySubscriptions[255];
+
+    unsigned char totalClients; // the number of clients that subscribe my service
+    long myClients[255];
+
     char mData[255]; // store the latest serv data that will be sent out per request
     unsigned char dataLength; // store the length of service data
+
+    long totalMessageSent;
+    long totalMessageReceived;
+
+    long nextDogFeedTime;
+    bool adoptWatchDog;
 };
 
 #endif // MESSAGEQUEUE_H

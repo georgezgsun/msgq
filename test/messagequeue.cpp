@@ -15,7 +15,7 @@
 MessageQueue::MessageQueue()
 {
     mType = 0;
-	mId = 0;
+    mId = -1;
 	filename = DEAFULTMSGQ;
 	err = 0;
 };
@@ -23,7 +23,7 @@ MessageQueue::MessageQueue()
 MessageQueue::MessageQueue(string keyFilename)
 {
     mType = 0;
-	mId = 0;
+    mId = -1;
 	filename = keyFilename;
 	err = 0;
 };
@@ -31,8 +31,17 @@ MessageQueue::MessageQueue(string keyFilename)
 bool MessageQueue::Open(long SrvType)
 {
 	memset(&buf, 0, sizeof(buf));  // initialize the internal buffer
-    memset(&subscribers, 0, sizeof(subscribers));
-	totalSubcribers = 0;
+    memset(&myClients, 0, sizeof(myClients));
+    memset(&mySubscriptions, 0, sizeof(mySubscriptions));
+    totalSubscriptions = 0;
+    totalClients = 0;
+    totalMessageSent = 0;
+    totalMessageReceived =0;
+    autoReply = true;
+
+    adoptWatchDog = false;
+    nextDogFeedTime = 0;
+
     mType = SrvType;
 	
     err = -1; // 0 indicates no error;
@@ -51,6 +60,12 @@ bool MessageQueue::Open(long SrvType)
 	return true;
 }
 
+bool MessageQueue::SetAutoReply(bool EnableAutoReply)
+{
+    autoReply = EnableAutoReply;
+    return true;
+};
+
 MessageQueue::~MessageQueue()
 {
     // if it is the the server , delete the message queue
@@ -61,7 +76,7 @@ MessageQueue::~MessageQueue()
 bool MessageQueue::SndMsg(string msg, long SrvType)
 {
     err = -1;
-	if (mId == 0) return false;
+    if (mId == -1) return false;
 	
 	err = -2;
     if (SrvType <= 0) return false;
@@ -82,14 +97,19 @@ bool MessageQueue::SndMsg(string msg, long SrvType)
 	
 	int rst = msgsnd(mId, &buf, len + 3*sizeof (long) + 1, IPC_NOWAIT);
 	err = errno;
-    return rst == 0;
+    if (rst == 0)
+    {
+        totalMessageSent++;
+        return true;
+    }
+    return false;
 };
 
 // Send a packet with given length to specified service provider
 bool MessageQueue::SndMsg(void *p, size_t len, long SrvType)
 {
     err = -1;
-	if (mId == 0) return false;
+//	if (mId == 0) return false;
 	
 	err = -2;
     if (SrvType <= 0) return false;
@@ -107,6 +127,7 @@ bool MessageQueue::SndMsg(void *p, size_t len, long SrvType)
     memcpy(buf.mText, p, len);
 	int rst = msgsnd(mId, &buf, len + 3*sizeof (long) + 1, IPC_NOWAIT);
 	err = errno;
+    totalMessageSent++;
     return rst == 0;
 }; 
 
@@ -118,7 +139,15 @@ bool MessageQueue::AskForService(long SrvType)
 
 bool MessageQueue::Subscribe(long SrvType)
 {
-    return SndMsg(CMD_SUBSCRIBE, SrvType);
+    bool rst = SndMsg(CMD_SUBSCRIBE, SrvType);
+
+    for (int i = 0; i < totalClients; i++)
+        if (myClients[i] == SrvType)
+            return rst;
+
+    // add the new subscription to my list
+    mySubscriptions[totalSubscriptions++] = SrvType;
+    return rst;
 };
 
 bool MessageQueue::BroadcastUpdate(void *p, unsigned char dataLength)
@@ -133,9 +162,9 @@ bool MessageQueue::BroadcastUpdate(void *p, unsigned char dataLength)
     memcpy(buf.mText, p, buf.len);
 
     int rst;
-    for (int i = 0; i < totalSubcribers; i++)
+    for (int i = 0; i < totalClients; i++)
     {
-        buf.rType = subscribers[i];
+        buf.rType = myClients[i];
         rst = msgsnd(mId, &buf, buf.len + 3*sizeof (long) + 1, IPC_NOWAIT);
         err = errno;
         if (rst < 0) return false;
@@ -146,11 +175,23 @@ bool MessageQueue::BroadcastUpdate(void *p, unsigned char dataLength)
 // receive a message from sspecified ervice provider, like GPS, RADAR, TRIGGER. No AutoReply
 string MessageQueue::RcvMsg()
 {
+    string msg = "";
+    ssize_t len = RcvMsg(nullptr);
+    if (len > 0)
+        msg.assign(buf.mText, static_cast<size_t>(len));
+    return msg;
+
+
+}
+/*
+string RcvMsg1()
+{
     ssize_t headerLen = 3 * sizeof(long) + 1;
     memset(&buf, 0, sizeof(buf));  // initialize the internal buffer
 
     err = -1;
     ssize_t len = msgrcv(mId, &buf, static_cast<size_t>(headerLen) + sizeof(buf.mText), mType, IPC_NOWAIT) - headerLen;
+    totalMessageReceived++;
     if (len < 0) return "";
 
     msgType = buf.sType; // the service type of last receiving message
@@ -163,39 +204,53 @@ string MessageQueue::RcvMsg()
     msg.assign(buf.mText, static_cast<size_t>(len));
     return msg;
 };
+*/
 
  // receive a packet from specified service provider. Autoreply all requests when enabled.
-ssize_t MessageQueue::RcvMsg(void *p,bool AutoReply)
+ssize_t MessageQueue::RcvMsg(void *p)
 {
     ssize_t headerLen = 3 * sizeof(long) + 1;
 	ssize_t len = 0;
     string sub = CMD_SUBSCRIBE;
     string qry = CMD_QUERY;
+    int i;
+    int j;
+
+    struct timeval tv;
 	do
     {
         len = msgrcv(mId, &buf, sizeof(buf), mType, IPC_NOWAIT) - headerLen;
-		err = errno;
-		if (len <= 0) return len;
+        err = len;
+        totalMessageSent++;
+        if (len <= 0)
+            return 0;
  		
-        memcpy(p, buf.mText, static_cast<size_t>(len));
+        if (p != nullptr)
+            memcpy(p, buf.mText, static_cast<size_t>(len));
 		msgType = buf.sType; // the service type of last receiving message 
 		msgTS_sec = buf.sec; // the time stamp in seconds of latest receiving message
 		msgTS_usec = buf.usec;
-		if (!AutoReply) return len;
+        if (!autoReply)
+            return len;
 
-		// process subscription
+        // Feed the watch dog
+        gettimeofday(&tv, nullptr);
+        if (adoptWatchDog && tv.tv_sec > nextDogFeedTime)
+            FeedWatchDog();
+
+        // process new subscribe requests
         if (strncmp(sub.c_str(), buf.mText, sub.length()) == 0)
 		{
             if (msgType > 0) // add new subscriber to the list
-				subscribers[totalSubcribers++] = msgType; // increase totalSubcribers by 1
+                myClients[totalClients++] = msgType; // increase totalClients by 1
 			else
 			{  // delete the corresponding subscriber from the list
-				for ( int i = 0; i < totalSubcribers; i++)
-                    if (subscribers[i] + msgType == 0)
+                for ( i = 0; i < totalClients; i++)
+                    if (myClients[i] + msgType == 0)
 					{  // move later subscriber one step up
-						for (int j = i; j < totalSubcribers - 1; j++)
-                            subscribers[j] = subscribers[j+1];
-						totalSubcribers--;  // decrease totalSubcribers by 1
+                        for ( j = i; j < totalClients - 1; j++)
+                            myClients[j] = myClients[j+1];
+                        totalClients--;  // decrease totalClients by 1
 					}
 			}
 			continue; // continue to read more messages 
@@ -217,6 +272,26 @@ ssize_t MessageQueue::RcvMsg(void *p,bool AutoReply)
 			err = errno;
 			continue;   // continue to read more messages
 		}
+
+        // process watch dog warning of service provider died. Warning format is
+        // |Subscribe <Service type>
+        long type = WATCHDOG;
+        if ((msgType == type) && strncmp(sub.c_str(), buf.mText, sub.length()))
+        {
+            type = buf.mText[sub.length()+1];
+            Subscribe(type); // re-subscribe, the service will be back when the service provider is up
+
+            // stop broadcasting service data to that subscriber
+            for ( i = 0; i < totalClients; i++)
+                if (myClients[i] == msgType)
+                {  // move later subscriber one step up
+                    for ( j = i; j < totalClients - 1; j++)
+                        myClients[j] = myClients[j+1];
+                    totalClients--;  // decrease totalClients by 1
+                }
+
+            return 0;
+        }
 		
 		// any other receiving message will be processed outside
 		return len;
