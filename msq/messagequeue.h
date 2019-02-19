@@ -12,53 +12,18 @@
 #define CMD_QUERY "Query"
 #define CMD_LOG "Log"
 #define CMD_UPDATE "Update"
+#define CMD_ONBOARD "Onboard"
+#define CMD_LIST "List"
+#define CMD_DOWN "Down"
 
-#define SERVER 1;
-#define LOG 2;
-#define DATABASE 3;
-#define WATCHDOG 4;
-#define RADAR 10
-#define GPS 11;
-#define TRIGGER 12;
-#define WIFI 13;
-#define BLUETOOTH 14;
-#define USER 15
-#define LOGIN 15; //LOGIN is the same as USER
-#define UPLOADER 17;
-#define DOWNLOADER 18;
-#define FRONTCAM 20;
-#define REARCAM 22;
-#define RIGHTCAM 24;
-#define LEFTTCAM 26;
-#define CAM1 20;
-#define CAM2 22;
-#define CAM3 24;
-#define CAM4 26;
-#define CAM5 28;
-#define CAM6 29;
-#define ETH 30;
-#define MIC 40;
-#define MIC1 41;
-#define MIC2 42;
-#define MIC3 43;
-#define MIC4 44;
-#define BWC 50;
-#define BWC1 51;
-#define BWC2 52;
-#define BWC3 53;
-#define BWC4 54;
-#define BWC 50;
+#define SERVER 1
+#define HEADER 1
+#define BASE 1
+#define CENTER 1
+#define COMMANDER 1
+#define CORE 1
 
 using namespace std;
-
-struct MsgPkt
-{
-	unsigned char lenOfText; // the actual length of mText
-    long sType;  // sender type
-    long sec;   // time stamp
-    long usec;
-    char mText[255];
-};
 
 struct MsgBuf
 {
@@ -70,19 +35,19 @@ struct MsgBuf
    char mText[255];
 };
 
-
 class MessageQueue
 {
 
 public:
-    MessageQueue(string keyFilename); // Define specified message queue
-	MessageQueue(); // Define a default message queue
+    MessageQueue(string keyFilename, string myServiceTitle, long myServiceType); // Define specified message queue
 	
-	bool Open(long SrvType); // Open the message queue and name its service type, like GPS, RADAR, TRIGGER
-    bool SetAutoReply(bool EnableAutoReply);
-	
-	bool Subscribe(long SrvType); // Subscribe a SrvType, unsubscribe for a negtive number 
-    bool AskForService(long SrvType); // Ask for service data from specified service provider 
+    bool Open(); // Open the message queue and name its service type, like GPS, RADAR, TRIGGER
+    long GetServiceType(string ServiceTitle); // Get the corresponding service type to ServiceTitle, return 0 for not found
+    string GetServiceTitle(long ServiceType); // Get the corresponding service title to ServiceType, return "" for not found
+
+    bool Subscribe(string SrvTitle); // Subscribe a service by its title
+    bool Subscribe(long SrvType); // Subscribe a service by its type, unsubscribe with a negtive number
+    bool AskForServiceOnce(long SrvType); // Ask for service data from specified service provider
     bool SndMsg(string msg, long SrvType); // Send a string to specified service provider
 	bool SndMsg(void *p, size_t len, long SrvType); // Send a packet with given length to specified service provider
     bool BroadcastUpdate(void *p, unsigned char dataLength); // Multicast the data stored at *p with dataLength and send it to every subscriber
@@ -102,27 +67,33 @@ public:
 	long msgTS_sec; // the time stamp in seconds of latest receiving message
 	long msgTS_usec; // the micro seconds part of the time stamp of latest receiving message
 
-private:
+
+protected:
     struct MsgBuf buf;
     int mId;
+    long PID;
     long mType; // my Type, ser type of this module
-    string filename;  // the file that the key is build from
-    bool autoReply; // AutoReply is enabled when true
 
     unsigned char totalSubscriptions;  // the number of my subscriptions
     long mySubscriptions[255];
-
     unsigned char totalClients; // the number of clients that subscribe my service
     long myClients[255];
 
     char mData[255]; // store the latest serv data that will be sent out per request
     unsigned char dataLength; // store the length of service data
 
+    unsigned char totalServices;
+    char services[255][9];
+
     long totalMessageSent;
     long totalMessageReceived;
 
+    bool AutoReply(bool isServer);
+
+private:
+    string mTitle;
+    key_t mKey;
     long nextDogFeedTime;
-    bool adoptWatchDog;
 };
 
 #endif // MESSAGEQUEUE_H

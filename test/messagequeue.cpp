@@ -11,60 +11,76 @@
 #include <sys/msg.h>
 #include <sys/time.h>
 
-// key = 0 indicate to use default key based on "msgq.txt";
-MessageQueue::MessageQueue()
+MessageQueue::MessageQueue(string keyFilename, string myServiceTitle, long myServiceType)
 {
-    mType = 0;
+    mType = myServiceType;
+    mTitle = myServiceTitle;
+    // Get the key for the message queue from given filename, if empty using default name
+    if (keyFilename.length() == 0)
+        keyFilename = DEAFULTMSGQ;
+
+    // For server starts, make sure the keyFilename exists.
+    if ((mType == 1) && access( keyFilename.c_str(), F_OK ) == -1)
+    { //If not create one.
+        fopen(keyFilename.c_str(),"w+");
+    }
+    mKey = ftok(keyFilename.c_str(), 'B');
     mId = -1;
-	filename = DEAFULTMSGQ;
 	err = 0;
 };
 
-MessageQueue::MessageQueue(string keyFilename)
-{
-    mType = 0;
-    mId = -1;
-	filename = keyFilename;
-	err = 0;
-};
-
-bool MessageQueue::Open(long SrvType)
+bool MessageQueue::Open()
 {
 	memset(&buf, 0, sizeof(buf));  // initialize the internal buffer
     memset(&myClients, 0, sizeof(myClients));
     memset(&mySubscriptions, 0, sizeof(mySubscriptions));
+    memset(&services, 0, sizeof(services));
+
     totalSubscriptions = 0;
     totalClients = 0;
     totalMessageSent = 0;
     totalMessageReceived =0;
-    autoReply = true;
-
-    adoptWatchDog = false;
+    totalServices = 0;
     nextDogFeedTime = 0;
 
-    mType = SrvType;
-	
     err = -1; // 0 indicates no error;
-    if (mType <= 0) return false;
+    if (mType <= 0)
+        return false;
 
-    // Get the key for the message queue
     err = -2; // perror("ftok");
-    key_t mKey = ftok(filename.c_str(), 'B');
-    if (mKey == -1) return false;
+    if (mKey == -1)
+        return false;
 
     err = -3; //perror("msgget");
     mId = msgget(mKey, PERMS | IPC_CREAT);
-    if (mId == -1) return false;
+    if (mId == -1)
+        return false;
+
+
+    if (mType == 1)
+    {// Read off all previous messages
+        do
+        {
+        } while (msgrcv(mId, &buf, sizeof(buf), 0, IPC_NOWAIT) > 0);
+    }
+    else
+    {// Register itself to the server
+        string msg = CMD_ONBOARD;
+        msg.append(" ");
+        msg.append(to_string(getpid()));
+        msg.append(" ");
+        msg.append(to_string(getppid()));
+        msg.append(" ");
+        msg.append(mTitle);
+        msg.append(" ");
+        msg.append(to_string(mType)) ;
+        msg.append(" ");
+        SndMsg(msg, 1);
+    }
 
     err = 0;
 	return true;
 }
-
-bool MessageQueue::SetAutoReply(bool EnableAutoReply)
-{
-    autoReply = EnableAutoReply;
-    return true;
-};
 
 MessageQueue::~MessageQueue()
 {
@@ -132,13 +148,45 @@ bool MessageQueue::SndMsg(void *p, size_t len, long SrvType)
 }; 
 
 
-bool MessageQueue::AskForService(long SrvType)
+bool MessageQueue::AskForServiceOnce(long SrvType)
 {
     return SndMsg(CMD_QUERY, SrvType);
 };
 
+long MessageQueue::GetServiceType(string ServiceTitle)
+{
+    for (int i = 0; i < totalServices; i++)
+        if (strncmp(services[i], ServiceTitle.c_str(), ServiceTitle.length() ) == 0)
+            return static_cast<long>(services[i][8]);
+    return 0;
+};
+
+string MessageQueue::GetServiceTitle(long ServiceType)
+{
+    string str = "";
+    if (ServiceType > 255 || ServiceType < 2)
+        return str;
+
+    for (size_t i = 0; i < totalServices; i++)
+        if (services[i][8] == (ServiceType & 0xFF))
+        {
+            str.assign(services[i], 8); // Right now the title is always 8 bytes
+            return str;
+        }
+    return "";
+};
+
+bool MessageQueue::Subscribe(string ServiceTitle)
+{
+    return Subscribe(GetServiceType(ServiceTitle));
+};
+
 bool MessageQueue::Subscribe(long SrvType)
 {
+    err = -1;
+    if (SrvType <= 0)
+        return false;
+
     bool rst = SndMsg(CMD_SUBSCRIBE, SrvType);
 
     for (int i = 0; i < totalClients; i++)
@@ -175,159 +223,147 @@ bool MessageQueue::BroadcastUpdate(void *p, unsigned char dataLength)
 // receive a message from sspecified ervice provider, like GPS, RADAR, TRIGGER. No AutoReply
 string MessageQueue::RcvMsg()
 {
-    string msg = "";
-    ssize_t len = RcvMsg(nullptr);
+    char b[255] = "";
+    string msg;
+    ssize_t len = RcvMsg(b);
     if (len > 0)
         msg.assign(buf.mText, static_cast<size_t>(len));
     return msg;
-
-
 }
-/*
-string RcvMsg1()
-{
-    ssize_t headerLen = 3 * sizeof(long) + 1;
-    memset(&buf, 0, sizeof(buf));  // initialize the internal buffer
-
-    err = -1;
-    ssize_t len = msgrcv(mId, &buf, static_cast<size_t>(headerLen) + sizeof(buf.mText), mType, IPC_NOWAIT) - headerLen;
-    totalMessageReceived++;
-    if (len < 0) return "";
-
-    msgType = buf.sType; // the service type of last receiving message
-    msgTS_sec = buf.sec; // the time stamp in seconds of latest receiving message
-    msgTS_usec = buf.usec;
-
-    err = 0;
-//    buf.pkt.mText[len] = '\0';
-    string msg;
-    msg.assign(buf.mText, static_cast<size_t>(len));
-    return msg;
-};
-*/
 
  // receive a packet from specified service provider. Autoreply all requests when enabled.
 ssize_t MessageQueue::RcvMsg(void *p)
 {
-    ssize_t headerLen = 3 * sizeof(long) + 1;
-	ssize_t len = 0;
+    size_t i;
+    size_t j;
     string sub = CMD_SUBSCRIBE;
     string qry = CMD_QUERY;
-    int i;
-    int j;
-
+    string lst = CMD_LIST;
+    string dn = CMD_DOWN;
     struct timeval tv;
+    ssize_t headerLen = 3 * sizeof(long) + 1;
+
 	do
     {
-        len = msgrcv(mId, &buf, sizeof(buf), mType, IPC_NOWAIT) - headerLen;
+        ssize_t len = msgrcv(mId, &buf, sizeof(buf), mType, IPC_NOWAIT) - headerLen;
         err = len;
-        totalMessageSent++;
         if (len <= 0)
             return 0;
- 		
+        totalMessageReceived++;
+        err = 0;
+
         if (p != nullptr)
             memcpy(p, buf.mText, static_cast<size_t>(len));
 		msgType = buf.sType; // the service type of last receiving message 
 		msgTS_sec = buf.sec; // the time stamp in seconds of latest receiving message
 		msgTS_usec = buf.usec;
-        if (!autoReply)
-            return len;
+        buf.len = static_cast<unsigned char>(len);
 
-        // Feed the watch dog
-        gettimeofday(&tv, nullptr);
-        if (adoptWatchDog && tv.tv_sec > nextDogFeedTime)
-            FeedWatchDog();
+        // no autoreply for server
+        //if (mType == 1)
+        //    return buf.len;
 
-        // process new subscribe requests
+        // auto reply for new subscribe requests
         if (strncmp(sub.c_str(), buf.mText, sub.length()) == 0)
-		{
-            if (msgType > 0) // add new subscriber to the list
+        {
+            if (msgType > 0) // add new subscriber to the list when the type is positive
                 myClients[totalClients++] = msgType; // increase totalClients by 1
-			else
-			{  // delete the corresponding subscriber from the list
+            else
+            {  // delete the corresponding subscriber from the list when the type is negative
                 for ( i = 0; i < totalClients; i++)
                     if (myClients[i] + msgType == 0)
-					{  // move later subscriber one step up
+                    {  // move later subscriber one step up
                         for ( j = i; j < totalClients - 1; j++)
                             myClients[j] = myClients[j+1];
                         totalClients--;  // decrease totalClients by 1
-					}
-			}
-			continue; // continue to read more messages 
-		}
-		
-		// process request
-        if (strncmp(qry.c_str(), buf.mText, qry.length()) == 0)
-		{
-			struct timeval tv;
-			gettimeofday(&tv, nullptr);
-            buf.rType = msgType;
-			buf.sType = mType;
-			buf.sec = tv.tv_sec;
-			buf.usec = tv.tv_usec;
-			buf.len = dataLength;
-			
-			memcpy(buf.mText, mData, dataLength);
-            len = msgsnd(mId, &buf,  static_cast<size_t>(len) + 3*sizeof (long) + 1, IPC_NOWAIT);
-			err = errno;
-			continue;   // continue to read more messages
-		}
+                    }
+            }
+            continue; // continue to read next messages
+        }
 
-        // process watch dog warning of service provider died. Warning format is
-        // |Subscribe <Service type>
-        long type = WATCHDOG;
-        if ((msgType == type) && strncmp(sub.c_str(), buf.mText, sub.length()))
+        // auto reply for service request
+        if (strncmp(qry.c_str(), buf.mText, qry.length()) == 0)
         {
-            type = buf.mText[sub.length()+1];
-            Subscribe(type); // re-subscribe, the service will be back when the service provider is up
+            gettimeofday(&tv, nullptr);
+            buf.rType = msgType;
+            buf.sType = mType;
+            buf.sec = tv.tv_sec;
+            buf.usec = tv.tv_usec;
+            buf.len = dataLength;
+
+            memcpy(buf.mText, mData, dataLength);
+            len = msgsnd(mId, &buf,  static_cast<size_t>(buf.len) + 3*sizeof (long) + 1, IPC_NOWAIT);
+            err = errno;
+            continue; // continue to read next message
+        }
+
+        // no autoreply for server
+        if (mType == 1)
+            return buf.len;
+
+        // auto process the services list reply
+        if ((msgType == 1) && (strncmp(lst.c_str(), buf.mText, lst.length()) == 0))
+        { // List n title1 t1 title2 t2 ... titlen tn ; title is of const length 8
+            i = lst.length();
+            j = static_cast<size_t>(buf.mText[i]); // total items in this list
+            if (j > 26)
+            { // no more than 26 services can be transfered in one message
+                err = static_cast<int>(j);
+                return 0;
+            }
+            memcpy(services[totalServices], buf.mText+i+1, j*9);
+            totalServices += j;
+            continue;
+        }
+
+        // process watchdog notice of service provider down. Warning format is
+        // Subscribe <Service type>
+        if ((msgType == 1) && strncmp(dn.c_str(), buf.mText, dn.length()) == 0)
+        {
+            Subscribe(buf.mText[sub.length()+1]); // re-subscribe, waiting for the service provider been up again
 
             // stop broadcasting service data to that subscriber
             for ( i = 0; i < totalClients; i++)
-                if (myClients[i] == msgType)
+                if (myClients[i] == buf.mText[sub.length()+1])
                 {  // move later subscriber one step up
                     for ( j = i; j < totalClients - 1; j++)
                         myClients[j] = myClients[j+1];
                     totalClients--;  // decrease totalClients by 1
                 }
 
-            return 0;
+            continue;
         }
-		
-		// any other receiving message will be processed outside
-		return len;
-    } while (len > 0);
-	
-    return len;
+
+        break;
+    } while (buf.len > 0);
+    return buf.len;
 }
 
 // Feed the dog at watchdog server
 bool MessageQueue::FeedWatchDog()
 {
     string cmd = CMD_QUERY;
-    long SrvType = WATCHDOG;
-    return SndMsg(cmd, SrvType);
+
+    return SndMsg(cmd, 1);
 }; 
 
 // Send a log to log server
 bool MessageQueue::Log(string logContent, long logType)
 {
     string cmd = CMD_LOG;
-    long SrvType = WATCHDOG;
-    return SndMsg(cmd + " " + to_string(logType) + " " +logContent, SrvType);
+    return SndMsg(cmd + " " + to_string(logType) + " " +logContent, 1);
 };
 	
 // Send a request to database server to query for the value of keyword. The result will be placed in the queue by database server.
 bool MessageQueue::RequestDatabaseQuery(string keyword)
 {
     string cmd = CMD_QUERY;
-    long SrvType = DATABASE;
-    return SndMsg(cmd +  " " + keyword, SrvType);
+    return SndMsg(cmd +  " " + keyword, 1);
 };  
 
 // Send a request to database to update the value of keyword with newvalue. The database server will take care of the data type casting. 
 bool MessageQueue::RequestDatabaseUpdate(string keyword, string newvalue)
 {
     string cmd = CMD_UPDATE;
-    long SrvType = DATABASE;
-    return SndMsg(cmd + " " + keyword + " " + newvalue, SrvType);
+    return SndMsg(cmd + " " + keyword + " " + newvalue, 1);
 };

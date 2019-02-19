@@ -4,6 +4,7 @@
 #include <iostream>
 #include <unistd.h>
 #include <sys/time.h>
+#include <string.h>
 #include "messagequeue.h"
 
 using namespace std;
@@ -46,8 +47,9 @@ string current_time()
 int main(int argc, char *argv[])
 {
 //    QCoreApplication a(argc, argv);
+
     string msg;
-    MessageQueue *mq = new MessageQueue();
+    string tmp;
     char txt[255];
     char data[255];
     unsigned char dataLen = 0;
@@ -59,15 +61,14 @@ int main(int argc, char *argv[])
     if (argc == 1)
     {
         cout << "Running in server mode, waiting for client to connect and then response." << endl;
-        if (!mq->Open(1))
+        MessageQueue *mq = new MessageQueue("", "SERVER", 1);
+        if (!mq->Open())
         {
             cerr << "Cannot connect to required message queue\n";
             return -1;
         }
 
-        //mq->BroadcastUpdate(&data, dataLen);
-
-        bool updated = true;
+        //bool updated = true;
         while (true)
         {
             now = time(nullptr);
@@ -75,8 +76,8 @@ int main(int argc, char *argv[])
             //format: HH:mm:ss
             dataLen = strftime(txt, 30, "%X", &tstruct) & 0xFF;
 
-            updated = false;
-            for (int i = 0; i < dataLen; i++)
+            //updated = strncmp(txt, data, dataLen) == 0;
+/*            for (int i = 0; i < dataLen; i++)
             {
                 if (txt[i] != data[i])
                 {
@@ -84,17 +85,32 @@ int main(int argc, char *argv[])
                     data[i] = txt[i];
                 }
             }
-            if (updated)
+            */
+            if (strncmp(txt, data, dataLen) != 0)
+            {
+                strcpy(data, txt);
                 mq->BroadcastUpdate(&data, dataLen);
+            }
 
-            len =mq->RcvMsg(static_cast<void *>(&txt), true);
+            len =mq->RcvMsg(static_cast<void *>(&txt));
             if ( len > 0)
             {
                 msg.assign(txt, static_cast<size_t>(len));
                 cout << "Received " << msg << " at " << current_time() << " : (" << mq->msgType << ") " \
                      << mq->msgTS_sec << "." << mq->msgTS_usec << endl;
 
-                if ( msg == "end")
+                tmp = CMD_ONBOARD;
+                if ( strncmp(txt, CMD_ONBOARD, tmp.length()) == 0)
+                {
+                    strcpy(txt,"List Radar   +GPS     +Trigger +User    +Networks+FrontCam+RearCam +Recorder+Uploader+Dnloader+");
+                    txt[4] = 10;
+                    for (int i = 1; i < 11; i++)
+                        txt[i*9 + 4] = 10 + i;
+                    tmp.assign(txt, 90);
+                    mq->SndMsg(tmp, mq->msgType);
+                }
+
+                if (msg == "end")
                 {
                     mq->~MessageQueue();
                     break;
@@ -105,23 +121,40 @@ int main(int argc, char *argv[])
     else
     {
         cout << "Running in client mode. Try to query from the server." << endl;
-        int sType = atoi(argv[1]);
-        if (!mq->Open(sType))
+
+        int sType;
+        int rst;
+        msg = argv[1];
+
+        sType = (argc == 2) ? 11 : atoi(argv[2]);
+
+        if (sType > 255) sType = 255;
+        if (sType < 2) sType = 2;
+
+        MessageQueue *mq = new MessageQueue("", argv[1], sType);
+        if (!mq->Open())
         {
             cerr << "Cannot connect to required message queue\n";
+            delete mq;
             return -1;
         }
 
-        msg.assign(argv[1]);
-        msg.append(" on board");
-        if (!mq->SndMsg(msg, 1))
+        if (sType == 1)
         {
-            cerr << "Cannot send message " << msg << " to queue with error= " << mq->err << endl;
-            return -2;
+            delete mq;
+            return 0;
         }
-        cout << "Sent " << msg << " at " << current_time() << endl;
+
+        if (sType > 20)
+        {
+            rst = mq->SndMsg("end", 1);
+            delete mq;
+            return 0;
+        }
+
         mq->Subscribe(1);
 
+        int i = 11;
         while (true)
         {
             msg = mq->RcvMsg();
@@ -129,6 +162,9 @@ int main(int argc, char *argv[])
             {
                 cout << "Received " << msg << " at " << current_time() << " : (" << mq->msgType << ") " \
                      << mq->msgTS_sec << "." << mq->msgTS_usec << endl;
+
+                if (i > 20) i = 11;
+                cout << "Service list: " << mq->GetServiceTitle(i) << " " << i++ << endl;
                 if (msg == "end") break;
             }
         }
