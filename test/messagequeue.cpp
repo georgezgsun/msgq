@@ -11,6 +11,37 @@
 #include <sys/msg.h>
 #include <sys/time.h>
 
+#define PERMS 0644
+#define DEAFULTMSGQ "/tmp/msgq.txt"
+
+#define CMD_ONBOARD 1
+#define CMD_LIST 1
+#define CMD_DATABASEINIT 2
+#define CMD_DATABASEUPDATE 2
+#define CMD_DATABASEQUERY 3
+#define CMD_LOG 4
+#define CMD_WATCHDOG 5
+#define CMD_DOWN 5
+#define CMD_STOP 6
+#define CMD_SUBSCRIBE 7
+#define CMD_QUERY 8
+
+#define SERVER 1
+#define HEADER 1
+#define BASE 1
+#define CENTER 1
+#define COMMANDER 1
+#define CORE 1
+
+struct Onboard
+{
+    char cmd;
+    char type;
+    char title[9];
+    pid_t pid;
+    pid_t ppid;
+};
+
 MessageQueue::MessageQueue(string keyFilename, string myServiceTitle, long myServiceType)
 {
     mType = myServiceType;
@@ -31,7 +62,8 @@ MessageQueue::MessageQueue(string keyFilename, string myServiceTitle, long mySer
 
 bool MessageQueue::Open()
 {
-	memset(&buf, 0, sizeof(buf));  // initialize the internal buffer
+    // initialize the internal buffers
+    memset(&buf, 0, sizeof(buf));
     memset(&myClients, 0, sizeof(myClients));
     memset(&mySubscriptions, 0, sizeof(mySubscriptions));
     memset(&services, 0, sizeof(services));
@@ -41,7 +73,9 @@ bool MessageQueue::Open()
     totalMessageSent = 0;
     totalMessageReceived =0;
     totalServices = 0;
-    nextDogFeedTime = 0;
+    totalProperties = 0;
+
+    Onboard report;
 
     err = -1; // 0 indicates no error;
     if (mType <= 0)
@@ -55,7 +89,11 @@ bool MessageQueue::Open()
     mId = msgget(mKey, PERMS | IPC_CREAT);
     if (mId == -1)
         return false;
+    printf("MsgQue ID : %ld\n", mId);
 
+    err = -4; // mTitle too long
+    if (mTitle.length() > sizeof(report.title))
+        return false;
 
     if (mType == 1)
     {// Read off all previous messages
@@ -65,17 +103,12 @@ bool MessageQueue::Open()
     }
     else
     {// Register itself to the server
-        string msg = CMD_ONBOARD;
-        msg.append(" ");
-        msg.append(to_string(getpid()));
-        msg.append(" ");
-        msg.append(to_string(getppid()));
-        msg.append(" ");
-        msg.append(mTitle);
-        msg.append(" ");
-        msg.append(to_string(mType)) ;
-        msg.append(" ");
-        SndMsg(msg, 1);
+        report.cmd = CMD_ONBOARD;
+        report.pid = getpid();
+        report.ppid = getppid();
+        report.type = static_cast<char>(mType & 0xFF);
+        strncpy(report.title, mTitle.c_str(), mTitle.length());
+        SndMsg(&report, sizeof(Onboard), 1);
     }
 
     err = 0;
@@ -147,10 +180,12 @@ bool MessageQueue::SndMsg(void *p, size_t len, long SrvType)
     return rst == 0;
 }; 
 
-
 bool MessageQueue::AskForServiceOnce(long SrvType)
 {
-    return SndMsg(CMD_QUERY, SrvType);
+    char txt = CMD_QUERY;
+    string msg;
+    msg.assign(1, txt);
+    return SndMsg(msg, SrvType);
 };
 
 long MessageQueue::GetServiceType(string ServiceTitle)
@@ -168,9 +203,9 @@ string MessageQueue::GetServiceTitle(long ServiceType)
         return str;
 
     for (size_t i = 0; i < totalServices; i++)
-        if (services[i][8] == (ServiceType & 0xFF))
+        if (services[i][9] == (ServiceType & 0xFF))
         {
-            str.assign(services[i], 8); // Right now the title is always 8 bytes
+            str.assign(services[i], 9); // Right now the title is always 8 bytes
             return str;
         }
     return "";
@@ -187,7 +222,10 @@ bool MessageQueue::Subscribe(long SrvType)
     if (SrvType <= 0)
         return false;
 
-    bool rst = SndMsg(CMD_SUBSCRIBE, SrvType);
+    char txt = CMD_SUBSCRIBE;
+    string msg;
+    msg.assign(1, txt);
+    bool rst = SndMsg(msg, SrvType);
 
     for (int i = 0; i < totalClients; i++)
         if (myClients[i] == SrvType)
@@ -236,15 +274,13 @@ ssize_t MessageQueue::RcvMsg(void *p)
 {
     size_t i;
     size_t j;
-    string sub = CMD_SUBSCRIBE;
-    string qry = CMD_QUERY;
-    string lst = CMD_LIST;
-    string dn = CMD_DOWN;
+    size_t n;
     struct timeval tv;
     ssize_t headerLen = 3 * sizeof(long) + 1;
 
 	do
     {
+        buf.rType = mType;
         ssize_t len = msgrcv(mId, &buf, sizeof(buf), mType, IPC_NOWAIT) - headerLen;
         err = len;
         if (len <= 0)
@@ -259,12 +295,12 @@ ssize_t MessageQueue::RcvMsg(void *p)
 		msgTS_usec = buf.usec;
         buf.len = static_cast<unsigned char>(len);
 
-        // no autoreply for server
-        //if (mType == 1)
-        //    return buf.len;
+        // no auto reply forr those normal receiving
+        if (buf.mText[0] > 31)
+            return len;
 
-        // auto reply for new subscribe requests
-        if (strncmp(sub.c_str(), buf.mText, sub.length()) == 0)
+        // auto reply for new subscription requests
+        if (buf.mText[0] == CMD_SUBSCRIBE)
         {
             if (msgType > 0) // add new subscriber to the list when the type is positive
                 myClients[totalClients++] = msgType; // increase totalClients by 1
@@ -278,11 +314,14 @@ ssize_t MessageQueue::RcvMsg(void *p)
                         totalClients--;  // decrease totalClients by 1
                     }
             }
-            continue; // continue to read next messages
+            // no continouse autoreply for server
+            if (mType != 1)
+                continue; // continue to read next messages
         }
 
         // auto reply for service request
-        if (strncmp(qry.c_str(), buf.mText, qry.length()) == 0)
+        //if (strncmp(qry.c_str(), buf.mText, qry.length()) == 0)
+        if (buf.mText[0] == CMD_QUERY)
         {
             gettimeofday(&tv, nullptr);
             buf.rType = msgType;
@@ -294,37 +333,97 @@ ssize_t MessageQueue::RcvMsg(void *p)
             memcpy(buf.mText, mData, dataLength);
             len = msgsnd(mId, &buf,  static_cast<size_t>(buf.len) + 3*sizeof (long) + 1, IPC_NOWAIT);
             err = errno;
-            continue; // continue to read next message
+
+            // no continouse autoreply for server
+            if (mType != 1)
+                continue; // continue to read next message
         }
 
-        // no autoreply for server
-        if (mType == 1)
+        // no other auto reply for server sending and reading
+        if ((mType == 1) || (msgType != 1))
             return buf.len;
 
         // auto process the services list reply
-        if ((msgType == 1) && (strncmp(lst.c_str(), buf.mText, lst.length()) == 0))
-        { // List n title1 t1 title2 t2 ... titlen tn ; title is of const length 8
-            i = lst.length();
-            j = static_cast<size_t>(buf.mText[i]); // total items in this list
-            if (j > 26)
-            { // no more than 26 services can be transfered in one message
-                err = static_cast<int>(j);
-                return 0;
+        // <List><n>[title1][t1][title2][t2] ... [titlen][tn] ; title is of const length 9
+        if (buf.mText[0] == CMD_LIST)
+        {
+            //i = lst.length();
+            n = static_cast<size_t>(buf.mText[1]);
+            if (n > 28)
+                n = 28;
+            for (i = 0; i < n; i++)
+                memcpy(services[totalServices + i], buf.mText + 2 + i * 10, 10);
+            totalServices += n;
+            continue;
+        }
+
+        // auto process the database init reply
+        // <db><n>[key_1][key_2] ... [key_n] ; key is of const length 9
+        if (buf.mText[0] == CMD_DATABASEINIT)
+        {
+            n = buf.mText[1] & 0x7F;
+            if (n > 28)
+                n = 28;
+
+            for (i = 0; i < n; i++)
+            {
+                if (!pptr[i])
+                    pptr[i] = new Property;
+                memcpy(pptr[i + totalProperties]->key, buf.mText + 2 + 9*i, 9);
             }
-            memcpy(services[totalServices], buf.mText+i+1, j*9);
-            totalServices += j;
+            totalProperties += n;
+            continue;
+        }
+
+        // auto process the database query reply
+        // <db><n>[index_1][type_1][value_1][index_2][type_2][value_2] ... [index_n][type_n][value_n] ; type represent type and length
+        if (buf.mText[0] == CMD_DATABASEQUERY)
+        {
+            int offset = 1;
+            char index;
+            char type;
+            n = buf.mText[offset++] & 0x7F;
+            for (i = 0; i< (n & 0x7F); i++)
+            {
+                index = buf.mText[offset++];
+                type = buf.mText[offset++];
+                pptr[index]->type = type;
+
+                // make sure the pointer is created before assign any value to it
+                if (!pptr[index]->ptr)
+                {
+                    if ((type & 0x80) == 0)
+                    {
+                        pptr[index]->ptr = new int;
+                    }
+                    else
+                    {
+                        pptr[index]->ptr = new string;
+                    }
+                }
+
+                if ((type & 0x80) == 0)
+                    memcpy(pptr[index]->ptr, buf.mText+offset, type & 0x7F);
+                else
+                {
+                    string tmp;
+                    tmp.assign(buf.mText+offset, type & 0x7F);
+                    static_cast<string *>(pptr[index]->ptr)->assign(buf.mText+offset, type & 0x7F);
+                }
+                offset += type&0x7F;
+            }
             continue;
         }
 
         // process watchdog notice of service provider down. Warning format is
-        // Subscribe <Service type>
-        if ((msgType == 1) && strncmp(dn.c_str(), buf.mText, dn.length()) == 0)
+        // <Down>[Service type]
+        if (buf.mText[0] == CMD_DOWN)
         {
-            Subscribe(buf.mText[sub.length()+1]); // re-subscribe, waiting for the service provider been up again
+            Subscribe(buf.mText[1]); // re-subscribe, waiting for the service provider been up again
 
             // stop broadcasting service data to that subscriber
             for ( i = 0; i < totalClients; i++)
-                if (myClients[i] == buf.mText[sub.length()+1])
+                if (myClients[i] == buf.mText[1])
                 {  // move later subscriber one step up
                     for ( j = i; j < totalClients - 1; j++)
                         myClients[j] = myClients[j+1];
@@ -342,28 +441,104 @@ ssize_t MessageQueue::RcvMsg(void *p)
 // Feed the dog at watchdog server
 bool MessageQueue::FeedWatchDog()
 {
-    string cmd = CMD_QUERY;
-
-    return SndMsg(cmd, 1);
+    char txt = CMD_WATCHDOG;
+    string msg;
+    msg.assign(1, txt);
+    return SndMsg(msg, 1);
 }; 
 
 // Send a log to log server
+// Sending format is [Log][logType][logContent]
 bool MessageQueue::Log(string logContent, long logType)
 {
-    string cmd = CMD_LOG;
-    return SndMsg(cmd + " " + to_string(logType) + " " +logContent, 1);
+    char txt[255];
+    txt[0] = CMD_LOG;
+    memcpy(txt+1, &logType, sizeof (long));
+    string msg;
+    msg.assign(txt, sizeof (long) + 1);
+    msg.append(logContent);
+    return SndMsg(msg, 1);
 };
 	
-// Send a request to database server to query for the value of keyword. The result will be placed in the queue by database server.
-bool MessageQueue::RequestDatabaseQuery(string keyword)
+// assign *i to store the integer queried from the database
+bool MessageQueue::dbAssign(string key, int *i)
 {
-    string cmd = CMD_QUERY;
-    return SndMsg(cmd +  " " + keyword, 1);
+    char index = getIndex(key); // 0 for invalid, 1 for the first
+    if (!index)
+        return false;
+    index--;  // adjust the index to the first one be 0
+
+    if (!(pptr[index]->type & 0x80))
+    {
+        *i = *static_cast<int *>(pptr[index]->ptr);
+        pptr[index]->ptr = i;
+        return true;
+    }
+    return false;
+};
+
+// assign *s to store the string queried from the database
+bool MessageQueue::dbAssign(string key, string *s)
+{
+    char index = getIndex(key); // 0 for invalid, 1 for the first
+    if (!index)
+        return false;
+    index--;  // adjust the index to the first one be 0
+
+    if (pptr[index]->type & 0x80)
+    {
+        *s = *static_cast<string *>(pptr[index]->ptr);
+        pptr[index]->ptr = s;
+        return true;
+    }
+    return false;
+};
+
+// Send a request to database server to query for the value of keyword. The result will be placed in the queue by database server.
+bool MessageQueue::dbQuery(string key)
+{
+    char txt[2];
+    txt[0] = CMD_DATABASEQUERY;
+    txt[1] = getIndex(key);  // 0 for invalid, 1 for the first
+    if (!txt[1])
+        return false;
+    string msg(txt);
+    return SndMsg(msg, 1);
 };  
 
 // Send a request to database to update the value of keyword with newvalue. The database server will take care of the data type casting. 
-bool MessageQueue::RequestDatabaseUpdate(string keyword, string newvalue)
+bool MessageQueue::dbUpdate(string key)
 {
-    string cmd = CMD_UPDATE;
-    return SndMsg(cmd + " " + keyword + " " + newvalue, 1);
+    char txt[255];
+    char index = getIndex(key); // 0 for invalid, 1 for the first
+    if (!index)
+        return false;
+
+    char type = pptr[index-1]->type;  // adjust the index
+    string msg;
+
+    txt[0] = CMD_DATABASEUPDATE;
+    txt[1] = index;
+    if (type &0x80)
+    {
+        size_t len = static_cast<string *>(pptr[index]->ptr)->length() & 0x7F;
+        txt[2] =  len | 0x80;
+        msg.assign(txt, len + 3);
+    }
+    else
+    {
+        txt[2] = sizeof(int);
+        memcpy(txt + 3, pptr[index]->ptr, sizeof(int));
+        msg.assign(txt, sizeof(int) + 3);
+    }
+
+    return SndMsg(msg, 1);
 };
+
+char MessageQueue::getIndex(string key)
+{
+    for (int i = 0; i < totalProperties; i++)
+        if (strncmp(pptr[i]->key, key.c_str(), key.length()) == 0)
+            return i+1;
+    return 0;
+}

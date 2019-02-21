@@ -2,37 +2,26 @@
 #define MESSAGEQUEUE_H
 
 #include <string>
-#include <sys/types.h>
-#include <sys/ipc.h>
-#include <sys/msg.h>
-
-#define PERMS 0644
-#define DEAFULTMSGQ "/tmp/msgq.txt"
-#define CMD_SUBSCRIBE "Subscribe"
-#define CMD_QUERY "Query"
-#define CMD_LOG "Log"
-#define CMD_UPDATE "Update"
-#define CMD_ONBOARD "Onboard"
-#define CMD_LIST "List"
-#define CMD_DOWN "Down"
-
-#define SERVER 1
-#define HEADER 1
-#define BASE 1
-#define CENTER 1
-#define COMMANDER 1
-#define CORE 1
 
 using namespace std;
 
+// structure that defines properties, used to retrieve properties from database
+struct Property
+{
+    char key[9];// keyword of this property, shall match with those in database
+    char type;  // type of this property, first bit 0 indicates string, 1 indicates interger. The rest bits return the length of the property.
+    void * ptr; // pointer to the property
+};
+
+// structure that holds the whole packet of a message in message queue
 struct MsgBuf
 {
    long rType;  // Receiver type
    long sType; // Sender Type
-   long sec;
-   long usec;
-   unsigned char len;
-   char mText[255];
+   long sec;    // timestamp sec
+   long usec;   // timestamp usec
+   unsigned char len;   //length of message payload in mText
+   char mText[255];  // message payload
 };
 
 class MessageQueue
@@ -41,7 +30,7 @@ class MessageQueue
 public:
     MessageQueue(string keyFilename, string myServiceTitle, long myServiceType); // Define specified message queue
 	
-    bool Open(); // Open the message queue and name its service type, like GPS, RADAR, TRIGGER
+    bool Open(); // Open the message queue and specify the property of this module, the properties will be auto updated later
     long GetServiceType(string ServiceTitle); // Get the corresponding service type to ServiceTitle, return 0 for not found
     string GetServiceTitle(long ServiceType); // Get the corresponding service title to ServiceType, return "" for not found
 
@@ -50,15 +39,18 @@ public:
     bool AskForServiceOnce(long SrvType); // Ask for service data from specified service provider
     bool SndMsg(string msg, long SrvType); // Send a string to specified service provider
 	bool SndMsg(void *p, size_t len, long SrvType); // Send a packet with given length to specified service provider
-    bool BroadcastUpdate(void *p, unsigned char dataLength); // Multicast the data stored at *p with dataLength and send it to every subscriber
+    bool BroadcastUpdate(void *p, unsigned char dataLength); // broadcast the data stored at *p with dataLength and send it to every subscriber
 
     string RcvMsg(); // receive a text message from sspecified ervice provider, like GPS, RADAR, TRIGGER. Not Autoreply.
     ssize_t RcvMsg(void *p); // receive a packet from specified service provider. Autoreply all requests when enabled.
 	
 	bool FeedWatchDog(); // Feed the dog at watchdog server
 	bool Log(string logContent, long logType); // Send a log to log server
-	bool RequestDatabaseQuery(string keyword); // Send a request to database server to query for the value of keyword. The result will be placed in the queue by database server.
-	bool RequestDatabaseUpdate(string keyword, string newvalue); // Send a request to database to update the value of keyword with newvalue. The database server will take care of the data type casting. 
+
+    bool dbAssign(string key, int * i); // assign *i to store the integer queried from the database
+    bool dbAssign(string key, string * s); // assign *s to store the string queried from the database
+    bool dbQuery(string key); // query for the value from database by the key. The result will be placed in variable assigned to the key before.
+    bool dbUpdate(string key); // update the value in database by the key with new value saved in variable assigned to the key before.
 
     ~MessageQueue();
 
@@ -67,33 +59,34 @@ public:
 	long msgTS_sec; // the time stamp in seconds of latest receiving message
 	long msgTS_usec; // the micro seconds part of the time stamp of latest receiving message
 
-
 protected:
     struct MsgBuf buf;
     int mId;
-    long PID;
-    long mType; // my Type, ser type of this module
+    long mType; // my Type, service type of this module
 
     unsigned char totalSubscriptions;  // the number of my subscriptions
     long mySubscriptions[255];
-    unsigned char totalClients; // the number of clients that subscribe my service
+    unsigned char totalClients; // the number of clients who subscribe my service
     long myClients[255];
 
-    char mData[255]; // store the latest serv data that will be sent out per request
+    char mData[255]; // store the latest service data that will be sent out per request
     unsigned char dataLength; // store the length of service data
 
     unsigned char totalServices;
-    char services[255][9];
+    char services[255][10];  // Services list got from server, 8 char + 1 stop + 1 index
 
+    unsigned char totalProperties;
     long totalMessageSent;
     long totalMessageReceived;
 
-    bool AutoReply(bool isServer);
+    Property *pptr[255]; // Pointer to the Properties of theis module
+
+    // return the index of the key in database
+    char getIndex(string key);
 
 private:
     string mTitle;
     key_t mKey;
-    long nextDogFeedTime;
 };
 
 #endif // MESSAGEQUEUE_H
